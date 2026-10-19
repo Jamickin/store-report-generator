@@ -223,13 +223,21 @@ export function ReportsLibrary() {
 
   const onScratch = async () => {
     const r = await createReport();
-    if (r) router.push(`/report/${r.id}`);
-    else alert("Could not create the report. Check your connection and retry.");
+    if (r) {
+      router.push(`/report/${r.id}`);
+      return true;
+    }
+    alert("Could not create the report. Check your connection and retry.");
+    return false;
   };
   const onGenerate = async (data: ReportData) => {
     const r = await createReport(data);
-    if (r) router.push(`/report/${r.id}`);
-    else alert("Could not create the report. Check your connection and retry.");
+    if (r) {
+      router.push(`/report/${r.id}`);
+      return true;
+    }
+    alert("Could not create the report. Check your connection and retry.");
+    return false;
   };
   const onDuplicate = async (id: string) => {
     await duplicateReport(id);

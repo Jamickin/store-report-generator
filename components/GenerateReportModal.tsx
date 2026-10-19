@@ -39,8 +39,9 @@ export function GenerateReportModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onScratch: () => Promise<void>;
-  onGenerate: (data: ReportData) => Promise<void>;
+  /** Resolve true once navigation to the new report has started. */
+  onScratch: () => Promise<boolean>;
+  onGenerate: (data: ReportData) => Promise<boolean>;
 }) {
   const [mode, setMode] = useState<"choice" | "wizard">("choice");
   const [stepIndex, setStepIndex] = useState(0);
@@ -95,19 +96,23 @@ export function GenerateReportModal({
 
   async function handleScratch() {
     setCreating(true);
+    let navigating = false;
     try {
-      await onScratch();
+      navigating = await onScratch();
     } finally {
-      setCreating(false);
+      // On success keep the spinner up: the route hasn't changed yet, and
+      // clearing it here left the modal looking idle for the whole transition.
+      if (!navigating) setCreating(false);
     }
   }
 
   async function handleGenerate() {
     setCreating(true);
+    let navigating = false;
     try {
-      await onGenerate(buildReportFromAnswers(answers));
+      navigating = await onGenerate(buildReportFromAnswers(answers));
     } finally {
-      setCreating(false);
+      if (!navigating) setCreating(false);
     }
   }
 
