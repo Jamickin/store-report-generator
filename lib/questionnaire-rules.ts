@@ -69,12 +69,10 @@ interface BlockList {
 const IMPACT: Record<string, number> = {
   // Good
   "Lightning Fast Store": 5,
-  "High Fulfillment Rate": 5,
   "Great Average Order Value": 5,
   "Healthy Checkout Flow": 5,
   "Healthy Returning Customer Rate": 5,
-  "Google Ads Doing the Heavy Lifting": 5,
-  "Quality Traffic Sources": 4,
+  "Traffic From the Right Sources": 5,
   "Focused Sales Channel": 4,
   "Free Shipping Threshold Matches Basket Size": 4,
   "Universal Shipping Fee": 4,
@@ -116,12 +114,11 @@ const IMPACT: Record<string, number> = {
   "Free Shipping Threshold Too High": 4,
   "No Buy-Now-Pay-Later Option": 4,
   "Missing Policy Pages": 4,
-  "Menus & Calls to Action Need Work": 4,
+  "Vague Menu & Button Labels": 4,
+  "Too Many Shipping Options at Checkout": 5,
   "Traffic Outside Target Market": 4,
   "Page Builder App Slowing You Down": 4,
-  "Dump Some Apps": 4,
   "Footer Needs Work": 3,
-  "Bland Copy": 3,
   "Reinforce the Purchase Decision": 3,
   "Image Content Needs Work": 3,
   "About Us Hidden": 3,
@@ -146,11 +143,16 @@ function candidate(title: string, paragraph: string, icon: string): Candidate {
   };
 }
 
+// A title already in the list is skipped: two questions can legitimately lead
+// to the same finding (e.g. search traffic seen from the referrer data and from
+// the Google Ads answer), and the report must not say it twice.
 function good(list: BlockList, title: string, paragraph: string, icon: string) {
+  if (list.good.some((c) => c.block.title === title)) return;
   list.good.push(candidate(title, paragraph, icon));
 }
 
 function badBlock(list: BlockList, title: string, paragraph: string, icon: string) {
+  if (list.bad.some((c) => c.block.title === title)) return;
   list.bad.push(candidate(title, paragraph, icon));
 }
 
@@ -183,12 +185,10 @@ function reuseBad(list: BlockList, templateId: string) {
 const RETURNING_MIN = 20;
 const RETURNING_MAX = 35;
 const AOV_GOOD_RATIO = 0.9;
-const FULFILLMENT_GOOD = 95;
 const FULFILLMENT_BAD = 85;
 const ATC_CONVERSION_GOOD = 25; // orders / addedToCart, %
 const SOCIAL_SALES_SHARE_GOOD = 15; // % of gross sales
 const SOCIAL_SALES_SHARE_BAD = 30;
-const APP_COUNT_BAD = 15;
 const SOCIAL_FOLLOWERS_GOOD = 1000;
 
 export function buildReportFromAnswers(answers: Answers): ReportData {
@@ -217,11 +217,17 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
       "gauge",
     );
   } else if (no(answers, "fastSite")) {
+    // Name the element when the reviewer knows it. The block deliberately does
+    // not blame apps or code in general: the cause is a specific element, and
+    // saying "bloated app code" when it is e.g. a hero video is simply untrue.
+    const cause = s(answers, "lcpCause");
     badBlock(
       list,
       "Slow Loading Speed (LCP)",
       body(
-        "Bloated app code is dragging the Largest Contentful Paint down. Visitors bounce before the page is even usable — a direct hit to conversion.",
+        cause
+          ? `Largest Contentful Paint is over the 2.5 second target. The largest element on the page is ${cause}, and visitors wait on it before the page looks ready.`
+          : "Largest Contentful Paint is over the 2.5 second target. The largest element on the page is slow to load, and visitors wait on it before the page looks ready.",
         "If your site doesn't load and a visitor doesn't understand what it's about in 2 seconds, they're gone for good.",
       ),
       "hourglass",
@@ -243,17 +249,10 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
   const fulfilled = n(answers, "ordersFulfilled");
   if (orders && fulfilled !== undefined) {
     const rate = (fulfilled / orders) * 100;
-    if (rate >= FULFILLMENT_GOOD) {
-      good(
-        list,
-        "High Fulfillment Rate",
-        body(
-          "Orders that are made are being fulfilled almost 100% of the time — customers are getting what they paid for, reliably.",
-          "That reliability is exactly what a returning customer rate is built on.",
-        ),
-        "package",
-      );
-    } else if (rate < FULFILLMENT_BAD) {
+    // Only a low rate is worth a block. A high one is the baseline, not a
+    // strength, and "fulfilled" can exceed "placed" in a period (older orders
+    // shipping), which makes the percentage meaningless as praise.
+    if (rate < FULFILLMENT_BAD) {
       badBlock(
         list,
         "Low Fulfillment Rate",
@@ -308,21 +307,28 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
         "cart",
       );
     } else if (reachedCheckout !== undefined && reachedCheckout < addedToCart * 0.6) {
+      const reachedPct = Math.round((reachedCheckout / addedToCart) * 100);
       badBlock(
         list,
         "Drop-Off From Cart to Checkout",
         body(
-          "There's a clear drop-off between add-to-cart and reaching checkout — more than the normal threshold. That points to friction before the customer even sees the checkout page: shipping cost surprises, a clunky cart drawer, or an unclear next step.",
+          `Only ${reachedPct}% of shoppers who add to cart reach checkout (${reachedCheckout.toLocaleString("en-US")} of ${addedToCart.toLocaleString("en-US")}). The loss happens before the checkout page loads, in the cart step.`,
           "This needs to change yesterday.",
         ),
         "cart",
       );
     } else {
+      const completedPct =
+        reachedCheckout && orders !== undefined
+          ? Math.round((orders / reachedCheckout) * 100)
+          : undefined;
       badBlock(
         list,
         "Checkout Drop-Off",
         body(
-          "Visitors are reaching checkout but not completing it. Currently the checkout page needs a little more love and attention to create a full sense of cohesion between shopping and paying.",
+          completedPct !== undefined
+            ? `Only about ${completedPct}% of shoppers who reach checkout place an order (${orders?.toLocaleString("en-US")} orders from ${reachedCheckout?.toLocaleString("en-US")} checkout sessions). The loss happens on the checkout page itself.`
+            : "Visitors are reaching checkout but not completing it. The loss happens on the checkout page itself.",
           "Put yourself in the customer's shoes and look through customer eyes.",
         ),
         "credit-card",
@@ -397,7 +403,7 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
       if (share <= SOCIAL_SALES_SHARE_GOOD) {
         good(
           list,
-          "Quality Traffic Sources",
+          "Traffic From the Right Sources",
           body(
             "Total sales by referrer shows what we want to see: the bulk of sales are coming directly or via search, not social. That means the most sales are being made through the strongest-converting channels.",
             "Keep that budget where it's working.",
@@ -493,7 +499,7 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
   if (yes(answers, "runsGoogleAds") && yes(answers, "googleAdsEffective")) {
     good(
       list,
-      "Google Ads Doing the Heavy Lifting",
+      "Traffic From the Right Sources",
       body(
         `"Social Media builds brands, Google Ads build bank balances." Search traffic is converting well here — it's more valuable per visitor than social, and it shows in the numbers.`,
         "Keep feeding the channel that's actually paying you back.",
@@ -549,6 +555,18 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
       body(
         "There's no free shipping incentive on the store. Shipping cost is one of the most common reasons potential customers abandon their carts — even a threshold-based offer, priced into the products, tends to lift conversion.",
         "Test it and watch checkout completions rise.",
+      ),
+      "truck",
+    );
+  }
+
+  if (yes(answers, "shippingOverTwoRates")) {
+    badBlock(
+      list,
+      "Too Many Shipping Options at Checkout",
+      body(
+        "Checkout shows more than 2 shipping rates. Past 2, choice becomes a reason to stall at the moment of payment.",
+        "Cut it to 2: the fastest option and the cheapest.",
       ),
       "truck",
     );
@@ -660,7 +678,12 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
   }
 
   /* ---------------------------------------------------------- Navigation */
-  if (yes(answers, "goodNav")) {
+  // Menu labels and on-page button copy are the same problem — a label that
+  // doesn't say where it leads — so they raise one block, not two. The matching
+  // "good" blocks are suppressed in the same case so the report can't praise the
+  // navigation in one block and fault its labels in the next.
+  const vagueLabels = no(answers, "goodNav") || no(answers, "goodCopy");
+  if (yes(answers, "goodNav") && !vagueLabels) {
     good(
       list,
       "Great Navigation",
@@ -670,13 +693,13 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
       ),
       "badge-check",
     );
-  } else if (no(answers, "goodNav")) {
+  } else if (vagueLabels) {
     badBlock(
       list,
-      "Menus & Calls to Action Need Work",
+      "Vague Menu & Button Labels",
       body(
-        "Generic labels lose customers who scan fast. Menus and links need clearer, more enticing direction to help customers find what they want — every link should say where it leads.",
-        "Use dropdowns and more specific calls to action.",
+        "Generic labels such as 'Shop', 'View' or 'Learn More' lose customers who scan fast. Every menu item and button should say where it leads.",
+        "Be explicit and eloquent — name the destination.",
       ),
       "circle-help",
     );
@@ -735,7 +758,7 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
       ),
       "circle-help",
     );
-  } else if (no(answers, "redundantHomeLink")) {
+  } else if (no(answers, "redundantHomeLink") && !vagueLabels) {
     good(
       list,
       "Clean, Focused Navigation",
@@ -790,7 +813,7 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
     );
   }
 
-  if (yes(answers, "goodCopy")) {
+  if (yes(answers, "goodCopy") && !vagueLabels) {
     good(
       list,
       "Sharp, Specific Copy",
@@ -799,16 +822,6 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
         "Be explicit and eloquent — that's the standard here already.",
       ),
       "sparkles",
-    );
-  } else if (no(answers, "goodCopy")) {
-    badBlock(
-      list,
-      "Bland Copy",
-      body(
-        "Copy such as 'View' and 'Shop Now' doesn't explicitly tell the customer where they're going. Every button, section and colour must be chosen with intent.",
-        "Be explicit and eloquent!",
-      ),
-      "eye-off",
     );
   }
 
@@ -966,11 +979,6 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
       ),
       "mail",
     );
-  }
-
-  const appCount = n(answers, "appCount");
-  if (appCount !== undefined && appCount >= APP_COUNT_BAD) {
-    reuseBad(list, "builtin:dump-apps");
   }
 
   // Anything past the cap is dropped here rather than left for the editor to

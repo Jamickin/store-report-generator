@@ -85,7 +85,12 @@ export const QUESTIONNAIRE: QuestionnaireStep[] = [
         hint: "End of the reporting period — defaults to today if left blank.",
       }),
       bool("fastSite", "Does the store load quickly (LCP under ~2.5s)?", {
-        hint: "Website Speed report / PageSpeed Insights.",
+        hint: "Website Speed report / PageSpeed Insights / Lighthouse.",
+      }),
+      text("lcpCause", "What is the largest element slowing the page?", {
+        placeholder: "e.g. an 11 MB autoplaying hero video",
+        hint: "From the Lighthouse LCP element. Name the real cause rather than leaving it generic.",
+        showIf: (a) => a.fastSite === false,
       }),
     ],
   },
@@ -175,6 +180,11 @@ export const QUESTIONNAIRE: QuestionnaireStep[] = [
         "shippingMatchesAOV",
         "Does the free shipping threshold roughly match (or sit below) the AOV?",
         { showIf: (a) => a.freeShipping === true },
+      ),
+      bool(
+        "shippingOverTwoRates",
+        "Does checkout show more than 2 shipping rates?",
+        { hint: "Golden rule: no more than 2. Check a real checkout, not the settings page." },
       ),
       bool(
         "universalShipping",
@@ -278,7 +288,6 @@ export const QUESTIONNAIRE: QuestionnaireStep[] = [
         "Are they using a separate email marketing app instead of Shopify Email?",
         { hint: "Klaviyo, Omnisend, etc." },
       ),
-      num("appCount", "Roughly how many apps are installed?"),
     ],
   },
 ];
