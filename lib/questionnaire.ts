@@ -283,6 +283,10 @@ export const QUESTIONNAIRE: QuestionnaireStep[] = [
         "usesPageBuilder",
         "Are they using a page-builder app (PageFly, GemPages, Shogun)?",
       ),
+      text("slowingApps", "Which apps are measurably slowing the store, and by how much?", {
+        placeholder: "e.g. Gorgias chat widget: 12 requests, delays first paint by 1.2s",
+        hint: "Leave blank unless you measured it (Lighthouse third-party summary, network tab). A block is only raised when there is evidence to quote.",
+      }),
       bool(
         "usesEmailApp",
         "Are they using a separate email marketing app instead of Shopify Email?",

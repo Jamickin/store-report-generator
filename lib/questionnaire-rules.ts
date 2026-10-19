@@ -118,6 +118,7 @@ const IMPACT: Record<string, number> = {
   "Too Many Shipping Options at Checkout": 5,
   "Traffic Outside Target Market": 4,
   "Page Builder App Slowing You Down": 4,
+  "Apps Slowing the Store": 4,
   "Footer Needs Work": 3,
   "Reinforce the Purchase Decision": 3,
   "Image Content Needs Work": 3,
@@ -964,6 +965,22 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
       body(
         "A page-builder app is doing work the theme's own native sections could handle. These tend to inject heavy code that drags down load speed for a feature Shopify already offers natively.",
         "Use apps that truly add value, and bin the ones that don't.",
+      ),
+      "gauge",
+    );
+  }
+
+  // Blaming apps is fair when it can be backed up, so this is driven by the
+  // reviewer's own measurement and never by a count of installed apps or a
+  // hunch. No evidence typed in, no block.
+  const slowingApps = s(answers, "slowingApps");
+  if (slowingApps) {
+    badBlock(
+      list,
+      "Apps Slowing the Store",
+      body(
+        `${slowingApps.replace(/[.\s]+$/, "")}.`,
+        "Remove or defer anything that doesn't earn its place — every app script is paid for on every page load.",
       ),
       "gauge",
     );
