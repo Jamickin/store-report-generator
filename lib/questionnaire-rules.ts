@@ -1,5 +1,10 @@
 import type { ReportData } from "./types";
-import { createBlock, createInitialData } from "./defaults";
+import {
+  createBlock,
+  createInitialData,
+  MAX_BAD_BLOCKS,
+  MAX_GOOD_BLOCKS,
+} from "./defaults";
 import { num } from "./calc";
 import { body, BUILTIN_BY_ID } from "./block-templates";
 import type { Answers } from "./questionnaire";
@@ -15,9 +20,9 @@ import type { Answers } from "./questionnaire";
  * A few reuse a house template verbatim (`BUILTIN_BY_ID`) rather than
  * duplicating its copy, so the two stay in sync automatically.
  *
- * Blocks are pushed with no cap — `MAX_GOOD_BLOCKS` / `MAX_BAD_BLOCKS` only
- * gate the "Add block" button inside the live editor. A generated report can
- * legitimately land over the limit; the user trims it by hand afterwards.
+ * Blocks are collected uncapped and cut to `MAX_GOOD_BLOCKS` /
+ * `MAX_BAD_BLOCKS` at the very end (highest `IMPACT` wins, ties go to the
+ * earlier question), so a generated report never opens over the limit.
  */
 
 function s(answers: Answers, id: string): string {
@@ -38,17 +43,132 @@ function no(answers: Answers, id: string): boolean {
   return answers[id] === false;
 }
 
-interface BlockList {
-  good: ReturnType<typeof createBlock>[];
-  bad: ReturnType<typeof createBlock>[];
+type Block = ReturnType<typeof createBlock>;
+
+interface Candidate {
+  block: Block;
+  impact: number;
 }
 
+interface BlockList {
+  good: Candidate[];
+  bad: Candidate[];
+}
+
+/**
+ * How much a finding moves the store's revenue or the client's trust, 1–5.
+ * Only used to decide which blocks survive the `MAX_*_BLOCKS` cap — it is not
+ * stored on the block and does not touch the star `rating` or the health score.
+ *
+ * 5: speed, checkout, fulfillment, basket size — direct revenue levers.
+ * 4: acquisition, shipping/payment friction, navigation, policies.
+ * 3: content and polish that matters but rarely decides a sale (the default
+ *    for any title not listed, so a new block is never silently ranked last).
+ * 2: informational or cosmetic.
+ */
+const IMPACT: Record<string, number> = {
+  // Good
+  "Lightning Fast Store": 5,
+  "Great Average Order Value": 5,
+  "Healthy Checkout Flow": 5,
+  "Healthy Returning Customer Rate": 5,
+  "Traffic From the Right Sources": 5,
+  "Focused Sales Channel": 4,
+  "Free Shipping Threshold Matches Basket Size": 4,
+  "Universal Shipping Fee": 4,
+  "Paystack Available": 4,
+  "Buy Now, Pay Later Active": 4,
+  "Great Navigation": 4,
+  "Checkout Page Customised": 4,
+  "Policies Clearly Published": 4,
+  "Traffic From Your Target Market": 3,
+  "You're Offering Free Shipping!": 3,
+  "Contact Page Available": 3,
+  "About Us Surfaced in Navigation": 3,
+  "FAQ Answers Questions Before They're Asked": 3,
+  "Footer Pulling Its Weight": 3,
+  "Sharp, Specific Copy": 3,
+  "Product Imagery": 3,
+  "Alternating Content & Product Layout": 3,
+  "You're a Social Brand": 3,
+  "You're Practising Omnichannel!": 3,
+  "Majority Mobile Users": 3,
+  "Majority Desktop Users": 3,
+  "Clean, Focused Navigation": 2,
+  "Fav-Icon Set": 2,
+  "Built on Horizon": 2,
+
+  // Bad
+  "Slow Loading Speed (LCP)": 5,
+  "Drop-Off From Cart to Checkout": 5,
+  "Checkout Drop-Off": 5,
+  "Low Fulfillment Rate": 5,
+  "Below-Benchmark Average Order Value": 5,
+  "Default, Un-Customised Checkout": 4,
+  "Low Returning Customer Rate": 4,
+  "Scattered Sales Channels": 4,
+  "Social Traffic Pitfall": 4,
+  "No Google Ads Investment": 4,
+  "Google Ads Room to Improve": 4,
+  "No Free Shipping Offered": 4,
+  "Free Shipping Threshold Too High": 4,
+  "No Buy-Now-Pay-Later Option": 4,
+  "Missing Policy Pages": 4,
+  "Vague Menu & Button Labels": 4,
+  "Too Many Shipping Options at Checkout": 5,
+  "Traffic Outside Target Market": 4,
+  "Page Builder App Slowing You Down": 4,
+  "Apps Slowing the Store": 4,
+  "Footer Needs Work": 3,
+  "Reinforce the Purchase Decision": 3,
+  "Image Content Needs Work": 3,
+  "About Us Hidden": 3,
+  "No Contact Page": 3,
+  "No FAQ Page": 3,
+  "Returning Customer Rate Too High": 3,
+  "Paying for Email Marketing You Don't Need": 3,
+  "No Social Media Presence": 3,
+  "Underused Social Presence": 3,
+  "Paid Social Ads Underperforming": 3,
+  "Redundant 'Home' Link in Navigation": 2,
+  "Inconsistent Shipping Fees by Location": 2,
+  "No Shopify POS": 2,
+  "Missing Fav-Icon": 2,
+};
+const DEFAULT_IMPACT = 3;
+
+function candidate(title: string, paragraph: string, icon: string): Candidate {
+  return {
+    block: createBlock({ title, paragraph, icon }),
+    impact: IMPACT[title] ?? DEFAULT_IMPACT,
+  };
+}
+
+// A title already in the list is skipped: two questions can legitimately lead
+// to the same finding (e.g. search traffic seen from the referrer data and from
+// the Google Ads answer), and the report must not say it twice.
 function good(list: BlockList, title: string, paragraph: string, icon: string) {
-  list.good.push(createBlock({ title, paragraph, icon }));
+  if (list.good.some((c) => c.block.title === title)) return;
+  list.good.push(candidate(title, paragraph, icon));
 }
 
 function badBlock(list: BlockList, title: string, paragraph: string, icon: string) {
-  list.bad.push(createBlock({ title, paragraph, icon }));
+  if (list.bad.some((c) => c.block.title === title)) return;
+  list.bad.push(candidate(title, paragraph, icon));
+}
+
+/**
+ * Keeps the `max` highest-impact candidates. Ties go to whichever came first in
+ * the questionnaire, and the survivors keep that original order — the report
+ * should still read in the order the audit was walked, not shuffled by score.
+ */
+function topByImpact(candidates: Candidate[], max: number): Block[] {
+  return candidates
+    .map((c, order) => ({ ...c, order }))
+    .sort((a, b) => b.impact - a.impact || a.order - b.order)
+    .slice(0, max)
+    .sort((a, b) => a.order - b.order)
+    .map((c) => c.block);
 }
 
 function reuseGood(list: BlockList, templateId: string) {
@@ -66,12 +186,10 @@ function reuseBad(list: BlockList, templateId: string) {
 const RETURNING_MIN = 20;
 const RETURNING_MAX = 35;
 const AOV_GOOD_RATIO = 0.9;
-const FULFILLMENT_GOOD = 95;
 const FULFILLMENT_BAD = 85;
 const ATC_CONVERSION_GOOD = 25; // orders / addedToCart, %
 const SOCIAL_SALES_SHARE_GOOD = 15; // % of gross sales
 const SOCIAL_SALES_SHARE_BAD = 30;
-const APP_COUNT_BAD = 15;
 const SOCIAL_FOLLOWERS_GOOD = 1000;
 
 export function buildReportFromAnswers(answers: Answers): ReportData {
@@ -82,6 +200,8 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
   // Both are optional — an empty answer keeps createInitialData()'s defaults
   // (blank start date, reportDate defaulted to today) rather than blanking
   // out a sensible default.
+  data.storeName = s(answers, "storeName");
+  data.storeUrl = s(answers, "storeUrl");
   const startDate = s(answers, "startDate");
   if (startDate) data.startDate = startDate;
   const reportDate = s(answers, "reportDate");
@@ -98,11 +218,17 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
       "gauge",
     );
   } else if (no(answers, "fastSite")) {
+    // Name the element when the reviewer knows it. The block deliberately does
+    // not blame apps or code in general: the cause is a specific element, and
+    // saying "bloated app code" when it is e.g. a hero video is simply untrue.
+    const cause = s(answers, "lcpCause");
     badBlock(
       list,
       "Slow Loading Speed (LCP)",
       body(
-        "Bloated app code is dragging the Largest Contentful Paint down. Visitors bounce before the page is even usable — a direct hit to conversion.",
+        cause
+          ? `Largest Contentful Paint is over the 2.5 second target. The largest element on the page is ${cause}, and visitors wait on it before the page looks ready.`
+          : "Largest Contentful Paint is over the 2.5 second target. The largest element on the page is slow to load, and visitors wait on it before the page looks ready.",
         "If your site doesn't load and a visitor doesn't understand what it's about in 2 seconds, they're gone for good.",
       ),
       "hourglass",
@@ -124,17 +250,10 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
   const fulfilled = n(answers, "ordersFulfilled");
   if (orders && fulfilled !== undefined) {
     const rate = (fulfilled / orders) * 100;
-    if (rate >= FULFILLMENT_GOOD) {
-      good(
-        list,
-        "High Fulfillment Rate",
-        body(
-          "Orders that are made are being fulfilled almost 100% of the time — customers are getting what they paid for, reliably.",
-          "That reliability is exactly what a returning customer rate is built on.",
-        ),
-        "package",
-      );
-    } else if (rate < FULFILLMENT_BAD) {
+    // Only a low rate is worth a block. A high one is the baseline, not a
+    // strength, and "fulfilled" can exceed "placed" in a period (older orders
+    // shipping), which makes the percentage meaningless as praise.
+    if (rate < FULFILLMENT_BAD) {
       badBlock(
         list,
         "Low Fulfillment Rate",
@@ -189,21 +308,28 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
         "cart",
       );
     } else if (reachedCheckout !== undefined && reachedCheckout < addedToCart * 0.6) {
+      const reachedPct = Math.round((reachedCheckout / addedToCart) * 100);
       badBlock(
         list,
         "Drop-Off From Cart to Checkout",
         body(
-          "There's a clear drop-off between add-to-cart and reaching checkout — more than the normal threshold. That points to friction before the customer even sees the checkout page: shipping cost surprises, a clunky cart drawer, or an unclear next step.",
+          `Only ${reachedPct}% of shoppers who add to cart reach checkout (${reachedCheckout.toLocaleString("en-US")} of ${addedToCart.toLocaleString("en-US")}). The loss happens before the checkout page loads, in the cart step.`,
           "This needs to change yesterday.",
         ),
         "cart",
       );
     } else {
+      const completedPct =
+        reachedCheckout && orders !== undefined
+          ? Math.round((orders / reachedCheckout) * 100)
+          : undefined;
       badBlock(
         list,
         "Checkout Drop-Off",
         body(
-          "Visitors are reaching checkout but not completing it. Currently the checkout page needs a little more love and attention to create a full sense of cohesion between shopping and paying.",
+          completedPct !== undefined
+            ? `Only about ${completedPct}% of shoppers who reach checkout place an order (${orders?.toLocaleString("en-US")} orders from ${reachedCheckout?.toLocaleString("en-US")} checkout sessions). The loss happens on the checkout page itself.`
+            : "Visitors are reaching checkout but not completing it. The loss happens on the checkout page itself.",
           "Put yourself in the customer's shoes and look through customer eyes.",
         ),
         "credit-card",
@@ -278,7 +404,7 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
       if (share <= SOCIAL_SALES_SHARE_GOOD) {
         good(
           list,
-          "Quality Traffic Sources",
+          "Traffic From the Right Sources",
           body(
             "Total sales by referrer shows what we want to see: the bulk of sales are coming directly or via search, not social. That means the most sales are being made through the strongest-converting channels.",
             "Keep that budget where it's working.",
@@ -374,7 +500,7 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
   if (yes(answers, "runsGoogleAds") && yes(answers, "googleAdsEffective")) {
     good(
       list,
-      "Google Ads Doing the Heavy Lifting",
+      "Traffic From the Right Sources",
       body(
         `"Social Media builds brands, Google Ads build bank balances." Search traffic is converting well here — it's more valuable per visitor than social, and it shows in the numbers.`,
         "Keep feeding the channel that's actually paying you back.",
@@ -430,6 +556,18 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
       body(
         "There's no free shipping incentive on the store. Shipping cost is one of the most common reasons potential customers abandon their carts — even a threshold-based offer, priced into the products, tends to lift conversion.",
         "Test it and watch checkout completions rise.",
+      ),
+      "truck",
+    );
+  }
+
+  if (yes(answers, "shippingOverTwoRates")) {
+    badBlock(
+      list,
+      "Too Many Shipping Options at Checkout",
+      body(
+        "Checkout shows more than 2 shipping rates. Past 2, choice becomes a reason to stall at the moment of payment.",
+        "Cut it to 2: the fastest option and the cheapest.",
       ),
       "truck",
     );
@@ -541,7 +679,12 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
   }
 
   /* ---------------------------------------------------------- Navigation */
-  if (yes(answers, "goodNav")) {
+  // Menu labels and on-page button copy are the same problem — a label that
+  // doesn't say where it leads — so they raise one block, not two. The matching
+  // "good" blocks are suppressed in the same case so the report can't praise the
+  // navigation in one block and fault its labels in the next.
+  const vagueLabels = no(answers, "goodNav") || no(answers, "goodCopy");
+  if (yes(answers, "goodNav") && !vagueLabels) {
     good(
       list,
       "Great Navigation",
@@ -551,13 +694,13 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
       ),
       "badge-check",
     );
-  } else if (no(answers, "goodNav")) {
+  } else if (vagueLabels) {
     badBlock(
       list,
-      "Menus & Calls to Action Need Work",
+      "Vague Menu & Button Labels",
       body(
-        "Generic labels lose customers who scan fast. Menus and links need clearer, more enticing direction to help customers find what they want — every link should say where it leads.",
-        "Use dropdowns and more specific calls to action.",
+        "Generic labels such as 'Shop', 'View' or 'Learn More' lose customers who scan fast. Every menu item and button should say where it leads.",
+        "Be explicit and eloquent — name the destination.",
       ),
       "circle-help",
     );
@@ -616,7 +759,7 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
       ),
       "circle-help",
     );
-  } else if (no(answers, "redundantHomeLink")) {
+  } else if (no(answers, "redundantHomeLink") && !vagueLabels) {
     good(
       list,
       "Clean, Focused Navigation",
@@ -671,7 +814,7 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
     );
   }
 
-  if (yes(answers, "goodCopy")) {
+  if (yes(answers, "goodCopy") && !vagueLabels) {
     good(
       list,
       "Sharp, Specific Copy",
@@ -680,16 +823,6 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
         "Be explicit and eloquent — that's the standard here already.",
       ),
       "sparkles",
-    );
-  } else if (no(answers, "goodCopy")) {
-    badBlock(
-      list,
-      "Bland Copy",
-      body(
-        "Copy such as 'View' and 'Shop Now' doesn't explicitly tell the customer where they're going. Every button, section and colour must be chosen with intent.",
-        "Be explicit and eloquent!",
-      ),
-      "eye-off",
     );
   }
 
@@ -785,8 +918,13 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
   /* -------------------------------------------------------------- Social */
   if (yes(answers, "hasSocial")) {
     const followers = n(answers, "socialFollowers");
+    // "Underused" needs a reason to say so: an explicit "not posting" or a
+    // small following. An unanswered socialActive says nothing either way, and
+    // must not be read as a No.
     const active = yes(answers, "socialActive");
-    if (active && (followers === undefined || followers >= SOCIAL_FOLLOWERS_GOOD)) {
+    const inactive = no(answers, "socialActive");
+    const smallFollowing = followers !== undefined && followers < SOCIAL_FOLLOWERS_GOOD;
+    if (active && !smallFollowing) {
       good(
         list,
         "You're a Social Brand",
@@ -796,7 +934,7 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
         ),
         "crown",
       );
-    } else {
+    } else if (inactive || smallFollowing) {
       badBlock(
         list,
         "Underused Social Presence",
@@ -832,6 +970,22 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
     );
   }
 
+  // Blaming apps is fair when it can be backed up, so this is driven by the
+  // reviewer's own measurement and never by a count of installed apps or a
+  // hunch. No evidence typed in, no block.
+  const slowingApps = s(answers, "slowingApps");
+  if (slowingApps) {
+    badBlock(
+      list,
+      "Apps Slowing the Store",
+      body(
+        `${slowingApps.replace(/[.\s]+$/, "")}.`,
+        "Remove or defer anything that doesn't earn its place — every app script is paid for on every page load.",
+      ),
+      "gauge",
+    );
+  }
+
   if (yes(answers, "usesEmailApp")) {
     badBlock(
       list,
@@ -844,12 +998,11 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
     );
   }
 
-  const appCount = n(answers, "appCount");
-  if (appCount !== undefined && appCount >= APP_COUNT_BAD) {
-    reuseBad(list, "builtin:dump-apps");
-  }
-
-  data.goodBlocks = list.good;
-  data.badBlocks = list.bad;
+  // Anything past the cap is dropped here rather than left for the editor to
+  // trim: the PDF lays out exactly MAX_GOOD_BLOCKS / MAX_BAD_BLOCKS slots, and a
+  // report that opens already over the limit can't be edited back under it
+  // without deleting blocks the user never chose to add.
+  data.goodBlocks = topByImpact(list.good, MAX_GOOD_BLOCKS);
+  data.badBlocks = topByImpact(list.bad, MAX_BAD_BLOCKS);
   return data;
 }

@@ -53,6 +53,26 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* Tailwind v4's preflight resets buttons to cursor: default (v3 left them as
+   pointer), so nothing clickable looked clickable. Restoring it here, in the
+   base layer, keeps it the lowest-priority rule: utilities like cursor-grab on
+   drag handles still win. */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  summary,
+  select,
+  label[for],
+  input[type="checkbox"],
+  input[type="radio"] {
+    cursor: pointer;
+  }
+  button:disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+}
+
 /* Subtle brand gradient backdrop for the app shell */
 .app-bg {
   background:
