@@ -72,6 +72,12 @@ export const QUESTIONNAIRE: QuestionnaireStep[] = [
     title: "Overview",
     description: "The big picture before we get into the numbers.",
     questions: [
+      text("storeName", "Store name", {
+        placeholder: "e.g. Peak Cycles",
+      }),
+      text("storeUrl", "Store URL", {
+        placeholder: "www.peakcycles.co.za",
+      }),
       date("startDate", "Start date", {
         hint: "Beginning of the reporting period.",
       }),

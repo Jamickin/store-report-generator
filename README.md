@@ -126,7 +126,7 @@ across browsers and devices instead of living in one browser's `localStorage`.
 - **Auto-maths** (`lib/calc.ts`) — Conversion, AOV (gross ÷ orders),
   Add-to-Cart → Purchase %, fulfillment rate and device split are computed for
   you. Manual entries always win over the computed value.
-- **Blocks** — up to 6 per section. Tick a **Good** block to give it a purple
+- **Blocks** — up to 6 Good and 9 Bad. Tick a **Good** block to give it a purple
   "standout" border (default green). Tick a **Bad** block to soften it to an
   orange "improvable" border (default red).
 - **PDF** (`components/pdf/ReportDocument.tsx`) — built with

@@ -1,5 +1,10 @@
 import type { ReportData } from "./types";
-import { createBlock, createInitialData } from "./defaults";
+import {
+  createBlock,
+  createInitialData,
+  MAX_BAD_BLOCKS,
+  MAX_GOOD_BLOCKS,
+} from "./defaults";
 import { num } from "./calc";
 import { body, BUILTIN_BY_ID } from "./block-templates";
 import type { Answers } from "./questionnaire";
@@ -15,9 +20,9 @@ import type { Answers } from "./questionnaire";
  * A few reuse a house template verbatim (`BUILTIN_BY_ID`) rather than
  * duplicating its copy, so the two stay in sync automatically.
  *
- * Blocks are pushed with no cap — `MAX_GOOD_BLOCKS` / `MAX_BAD_BLOCKS` only
- * gate the "Add block" button inside the live editor. A generated report can
- * legitimately land over the limit; the user trims it by hand afterwards.
+ * Blocks are collected uncapped and cut to `MAX_GOOD_BLOCKS` /
+ * `MAX_BAD_BLOCKS` at the very end (highest `IMPACT` wins, ties go to the
+ * earlier question), so a generated report never opens over the limit.
  */
 
 function s(answers: Answers, id: string): string {
@@ -38,17 +43,129 @@ function no(answers: Answers, id: string): boolean {
   return answers[id] === false;
 }
 
+type Block = ReturnType<typeof createBlock>;
+
+interface Candidate {
+  block: Block;
+  impact: number;
+}
+
 interface BlockList {
-  good: ReturnType<typeof createBlock>[];
-  bad: ReturnType<typeof createBlock>[];
+  good: Candidate[];
+  bad: Candidate[];
+}
+
+/**
+ * How much a finding moves the store's revenue or the client's trust, 1–5.
+ * Only used to decide which blocks survive the `MAX_*_BLOCKS` cap — it is not
+ * stored on the block and does not touch the star `rating` or the health score.
+ *
+ * 5: speed, checkout, fulfillment, basket size — direct revenue levers.
+ * 4: acquisition, shipping/payment friction, navigation, policies.
+ * 3: content and polish that matters but rarely decides a sale (the default
+ *    for any title not listed, so a new block is never silently ranked last).
+ * 2: informational or cosmetic.
+ */
+const IMPACT: Record<string, number> = {
+  // Good
+  "Lightning Fast Store": 5,
+  "High Fulfillment Rate": 5,
+  "Great Average Order Value": 5,
+  "Healthy Checkout Flow": 5,
+  "Healthy Returning Customer Rate": 5,
+  "Google Ads Doing the Heavy Lifting": 5,
+  "Quality Traffic Sources": 4,
+  "Focused Sales Channel": 4,
+  "Free Shipping Threshold Matches Basket Size": 4,
+  "Universal Shipping Fee": 4,
+  "Paystack Available": 4,
+  "Buy Now, Pay Later Active": 4,
+  "Great Navigation": 4,
+  "Checkout Page Customised": 4,
+  "Policies Clearly Published": 4,
+  "Traffic From Your Target Market": 3,
+  "You're Offering Free Shipping!": 3,
+  "Contact Page Available": 3,
+  "About Us Surfaced in Navigation": 3,
+  "FAQ Answers Questions Before They're Asked": 3,
+  "Footer Pulling Its Weight": 3,
+  "Sharp, Specific Copy": 3,
+  "Product Imagery": 3,
+  "Alternating Content & Product Layout": 3,
+  "You're a Social Brand": 3,
+  "You're Practising Omnichannel!": 3,
+  "Majority Mobile Users": 3,
+  "Majority Desktop Users": 3,
+  "Clean, Focused Navigation": 2,
+  "Fav-Icon Set": 2,
+  "Built on Horizon": 2,
+
+  // Bad
+  "Slow Loading Speed (LCP)": 5,
+  "Drop-Off From Cart to Checkout": 5,
+  "Checkout Drop-Off": 5,
+  "Low Fulfillment Rate": 5,
+  "Below-Benchmark Average Order Value": 5,
+  "Default, Un-Customised Checkout": 4,
+  "Low Returning Customer Rate": 4,
+  "Scattered Sales Channels": 4,
+  "Social Traffic Pitfall": 4,
+  "No Google Ads Investment": 4,
+  "Google Ads Room to Improve": 4,
+  "No Free Shipping Offered": 4,
+  "Free Shipping Threshold Too High": 4,
+  "No Buy-Now-Pay-Later Option": 4,
+  "Missing Policy Pages": 4,
+  "Menus & Calls to Action Need Work": 4,
+  "Traffic Outside Target Market": 4,
+  "Page Builder App Slowing You Down": 4,
+  "Dump Some Apps": 4,
+  "Footer Needs Work": 3,
+  "Bland Copy": 3,
+  "Reinforce the Purchase Decision": 3,
+  "Image Content Needs Work": 3,
+  "About Us Hidden": 3,
+  "No Contact Page": 3,
+  "No FAQ Page": 3,
+  "Returning Customer Rate Too High": 3,
+  "Paying for Email Marketing You Don't Need": 3,
+  "No Social Media Presence": 3,
+  "Underused Social Presence": 3,
+  "Paid Social Ads Underperforming": 3,
+  "Redundant 'Home' Link in Navigation": 2,
+  "Inconsistent Shipping Fees by Location": 2,
+  "No Shopify POS": 2,
+  "Missing Fav-Icon": 2,
+};
+const DEFAULT_IMPACT = 3;
+
+function candidate(title: string, paragraph: string, icon: string): Candidate {
+  return {
+    block: createBlock({ title, paragraph, icon }),
+    impact: IMPACT[title] ?? DEFAULT_IMPACT,
+  };
 }
 
 function good(list: BlockList, title: string, paragraph: string, icon: string) {
-  list.good.push(createBlock({ title, paragraph, icon }));
+  list.good.push(candidate(title, paragraph, icon));
 }
 
 function badBlock(list: BlockList, title: string, paragraph: string, icon: string) {
-  list.bad.push(createBlock({ title, paragraph, icon }));
+  list.bad.push(candidate(title, paragraph, icon));
+}
+
+/**
+ * Keeps the `max` highest-impact candidates. Ties go to whichever came first in
+ * the questionnaire, and the survivors keep that original order — the report
+ * should still read in the order the audit was walked, not shuffled by score.
+ */
+function topByImpact(candidates: Candidate[], max: number): Block[] {
+  return candidates
+    .map((c, order) => ({ ...c, order }))
+    .sort((a, b) => b.impact - a.impact || a.order - b.order)
+    .slice(0, max)
+    .sort((a, b) => a.order - b.order)
+    .map((c) => c.block);
 }
 
 function reuseGood(list: BlockList, templateId: string) {
@@ -82,6 +199,8 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
   // Both are optional — an empty answer keeps createInitialData()'s defaults
   // (blank start date, reportDate defaulted to today) rather than blanking
   // out a sensible default.
+  data.storeName = s(answers, "storeName");
+  data.storeUrl = s(answers, "storeUrl");
   const startDate = s(answers, "startDate");
   if (startDate) data.startDate = startDate;
   const reportDate = s(answers, "reportDate");
@@ -785,8 +904,13 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
   /* -------------------------------------------------------------- Social */
   if (yes(answers, "hasSocial")) {
     const followers = n(answers, "socialFollowers");
+    // "Underused" needs a reason to say so: an explicit "not posting" or a
+    // small following. An unanswered socialActive says nothing either way, and
+    // must not be read as a No.
     const active = yes(answers, "socialActive");
-    if (active && (followers === undefined || followers >= SOCIAL_FOLLOWERS_GOOD)) {
+    const inactive = no(answers, "socialActive");
+    const smallFollowing = followers !== undefined && followers < SOCIAL_FOLLOWERS_GOOD;
+    if (active && !smallFollowing) {
       good(
         list,
         "You're a Social Brand",
@@ -796,7 +920,7 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
         ),
         "crown",
       );
-    } else {
+    } else if (inactive || smallFollowing) {
       badBlock(
         list,
         "Underused Social Presence",
@@ -849,7 +973,11 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
     reuseBad(list, "builtin:dump-apps");
   }
 
-  data.goodBlocks = list.good;
-  data.badBlocks = list.bad;
+  // Anything past the cap is dropped here rather than left for the editor to
+  // trim: the PDF lays out exactly MAX_GOOD_BLOCKS / MAX_BAD_BLOCKS slots, and a
+  // report that opens already over the limit can't be edited back under it
+  // without deleting blocks the user never chose to add.
+  data.goodBlocks = topByImpact(list.good, MAX_GOOD_BLOCKS);
+  data.badBlocks = topByImpact(list.bad, MAX_BAD_BLOCKS);
   return data;
 }
