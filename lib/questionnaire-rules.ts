@@ -159,16 +159,30 @@ function badBlock(list: BlockList, title: string, paragraph: string, icon: strin
 
 /**
  * Keeps the `max` highest-impact candidates. Ties go to whichever came first in
- * the questionnaire, and the survivors keep that original order — the report
+ * the questionnaire, and both halves keep that original order — the report
  * should still read in the order the audit was walked, not shuffled by score.
+ *
+ * The cut-off half is returned rather than thrown away: a finding that didn't
+ * get a block is still a finding, and the caller gives it a place to live.
  */
-function topByImpact(candidates: Candidate[], max: number): Block[] {
-  return candidates
+function splitByImpact(
+  candidates: Candidate[],
+  max: number,
+): { kept: Block[]; dropped: Block[] } {
+  const ranked = candidates
     .map((c, order) => ({ ...c, order }))
-    .sort((a, b) => b.impact - a.impact || a.order - b.order)
-    .slice(0, max)
-    .sort((a, b) => a.order - b.order)
-    .map((c) => c.block);
+    .sort((a, b) => b.impact - a.impact || a.order - b.order);
+  const inOrder = (cs: typeof ranked) =>
+    [...cs].sort((a, b) => a.order - b.order).map((c) => c.block);
+  return {
+    kept: inOrder(ranked.slice(0, max)),
+    dropped: inOrder(ranked.slice(max)),
+  };
+}
+
+/** The observation half of a `body()` paragraph, without the tagline. */
+function observation(paragraph: string): string {
+  return paragraph.split("\n\n")[0].trim();
 }
 
 function reuseGood(list: BlockList, templateId: string) {
@@ -195,6 +209,10 @@ const SOCIAL_FOLLOWERS_GOOD = 1000;
 export function buildReportFromAnswers(answers: Answers): ReportData {
   const data = createInitialData();
   const list: BlockList = { good: [], bad: [] };
+  /* Settings fixes that are worth doing but too small to earn a block. They go
+     straight to the action plan, written as "Title: what and why" lines, the
+     same shape the PDF parses into bold-led items. */
+  const actions: string[] = [];
 
   /* ------------------------------------------------------------- Overview */
   // Both are optional — an empty answer keeps createInitialData()'s defaults
@@ -643,6 +661,30 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
     );
   }
 
+  if (no(answers, "deliveryDates")) {
+    actions.push(
+      "Delivery dates: Estimated delivery dates are switched off in Shipping settings. Turn them on so shoppers see an arrival date, not just a range of business days.",
+    );
+  }
+
+  if (no(answers, "returnRules")) {
+    actions.push(
+      "Returns: No return or cancellation rules are set in Shopify, so customers can't request a return themselves. Add rules that match the published Return policy.",
+    );
+  }
+
+  if (no(answers, "emailAuthenticated")) {
+    actions.push(
+      "Email: The sender email domain isn't authenticated (SPF, DKIM, DMARC). Until it is, Shopify sends from a Shopify address instead, which looks less trustworthy and is likelier to land in spam.",
+    );
+  }
+
+  if (no(answers, "orderPrefix")) {
+    actions.push(
+      "Order numbers: Still Shopify's default #1001 format. Add a short brand prefix so orders are easy to recognise in emails and support.",
+    );
+  }
+
   /* ------------------------------------------------------------ Payments */
   if (yes(answers, "paystack")) {
     good(
@@ -998,11 +1040,27 @@ export function buildReportFromAnswers(answers: Answers): ReportData {
     );
   }
 
-  // Anything past the cap is dropped here rather than left for the editor to
+  // Anything past the cap is cut here rather than left for the editor to
   // trim: the PDF lays out exactly MAX_GOOD_BLOCKS / MAX_BAD_BLOCKS slots, and a
   // report that opens already over the limit can't be edited back under it
   // without deleting blocks the user never chose to add.
-  data.goodBlocks = topByImpact(list.good, MAX_GOOD_BLOCKS);
-  data.badBlocks = topByImpact(list.bad, MAX_BAD_BLOCKS);
+  const strengths = splitByImpact(list.good, MAX_GOOD_BLOCKS);
+  const weaknesses = splitByImpact(list.bad, MAX_BAD_BLOCKS);
+  data.goodBlocks = strengths.kept;
+  data.badBlocks = weaknesses.kept;
+
+  // Cut findings are not dropped silently. A cut weakness is exactly what the
+  // action plan is for in a hand-written report (a finding that didn't get a
+  // block), and a cut strength still deserves its mention in the closing note.
+  const plan = [
+    ...weaknesses.dropped.map((b) => `${b.title}: ${observation(b.paragraph)}`),
+    ...actions,
+  ];
+  data.actionPlan = plan.join("\n\n");
+  if (strengths.dropped.length) {
+    // Semicolons, not commas: several titles contain commas ("Buy Now, Pay
+    // Later Active"), and this box renders plain text, so bold can't mark them.
+    data.goodCustom = `Also working well: ${strengths.dropped.map((b) => b.title).join("; ")}.`;
+  }
   return data;
 }

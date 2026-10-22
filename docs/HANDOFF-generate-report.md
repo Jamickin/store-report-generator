@@ -78,15 +78,17 @@ These reports are the product, so every block has to be true and specific:
    "No Shopify POS" penalises stores that don't need POS; "Paying for Email Marketing You
    Don't Need" asserts Shopify Email is an equivalent.
 4. Star ratings are never set by generation, so generated reports show "Unrated" health.
-5. Blocks dropped by the cap are dropped silently; the modal doesn't say how many.
-6. The action plan field is left blank by generation. In practice it is a short list of
-   findings that did not get a block, plus a one-line fix for each block raised.
+5. ~~Blocks dropped by the cap are dropped silently.~~ Fixed (22 Oct): cut Bad findings
+   become action plan lines, cut Good findings are listed in the "Success is
+   Multi-Faceted" note.
+6. Partly fixed (22 Oct): the action plan now gets cut findings plus settings fixes. A
+   one-line fix per raised block still needs house copy per title.
 7. Social sessions and referrer sales are collected, but the PDF has no socials/referrers
    section (the README still describes one).
-8. Yes/No buttons have no `aria-pressed`.
-9. Questions that would have caught real findings and don't exist yet: order ID format,
-   email domain authentication (SPF/DKIM/DMARC), estimated delivery dates, return rules,
-   delivery promises on the Help Center vs checkout, collection links in the menu that
+8. ~~Yes/No buttons have no `aria-pressed`.~~ Fixed (22 Oct).
+9. Questions that would have caught real findings and don't exist yet (order ID format,
+   email domain authentication, estimated delivery dates and return rules were added
+   22 Oct as action-plan questions): delivery promises on the Help Center vs checkout, collection links in the menu that
    point somewhere unexpected, products with no reviews, restock forms on in-stock products.
 
 ## Verifying
